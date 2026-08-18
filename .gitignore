@@ -1,0 +1,11 @@
+*.iml
+.gradle/
+.idea/
+local.properties
+build/
+app/build/
+.DS_Store
+
+# NEVER commit the signing keystore or its passwords — see README "Release signing".
+keystore/
+keystore.properties
