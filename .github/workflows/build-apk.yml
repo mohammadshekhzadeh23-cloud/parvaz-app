@@ -8,6 +8,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # GitHub doesn't allow referencing `secrets` directly inside `if:` conditions,
+    # so we copy it into a plain env var here and check that instead.
+    env:
+      HAS_SIGNING: ${{ secrets.KEYSTORE_BASE64 != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,7 +35,7 @@ jobs:
       # KEY_ALIAS, KEY_PASSWORD. See README "Release signing" for how to get these
       # from your local keystore.properties / keystore/parvaz-release.jks.
       - name: Restore signing keystore from secrets
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        if: env.HAS_SIGNING == 'true'
         run: |
           mkdir -p keystore
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > keystore/parvaz-release.jks
@@ -61,21 +65,21 @@ jobs:
           path: app/build/outputs/apk/legacy/debug/app-legacy-debug.apk
 
       - name: Build signed release APKs (modern + legacy)
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        if: env.HAS_SIGNING == 'true'
         uses: gradle/gradle-build-action@v3
         with:
           gradle-version: 8.7
           arguments: assembleModernRelease assembleLegacyRelease --no-daemon
 
       - name: Upload modern release APK
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        if: env.HAS_SIGNING == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: parvaz-modern-release-apk
           path: app/build/outputs/apk/modern/release/app-modern-release.apk
 
       - name: Upload legacy release APK
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        if: env.HAS_SIGNING == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: parvaz-legacy-release-apk
