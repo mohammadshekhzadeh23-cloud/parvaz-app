@@ -59,12 +59,12 @@ jobs:
         if: steps.build_debug.outcome == 'failure'
         run: |
           {
-            echo "### Gradle debug build failed -- extracted errors"
+            echo "### Gradle debug build failed -- last 150 lines"
             echo '```'
-            grep -E "^e: |error:|FAILURE|Exception|What went wrong|Unresolved reference|Caused by|\* Where:|\* What went wrong" build_debug.log | tail -100 || tail -150 build_debug.log
+            tail -150 build_debug.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          ERR=$(grep -E "^e: |error:|FAILURE|Unresolved reference|What went wrong|Caused by" build_debug.log | tail -40 | tr '\n' '~')
+          ERR=$(tail -120 build_debug.log | tr '\n' '~')
           ERR="${ERR//~/%0A}"
           ERR="${ERR:0:60000}"
           echo "::error::${ERR}"
@@ -104,12 +104,12 @@ jobs:
         if: env.HAS_SIGNING == 'true' && steps.build_release.outcome == 'failure'
         run: |
           {
-            echo "### Gradle release build failed -- extracted errors"
+            echo "### Gradle release build failed -- last 150 lines"
             echo '```'
-            grep -E "^e: |error:|FAILURE|Exception|What went wrong|Unresolved reference|Caused by" build_release.log | tail -100 || tail -150 build_release.log
+            tail -150 build_release.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          ERR=$(grep -E "^e: |error:|FAILURE|Unresolved reference|What went wrong|Caused by" build_release.log | tail -40 | tr '\n' '~')
+          ERR=$(tail -120 build_release.log | tr '\n' '~')
           ERR="${ERR//~/%0A}"
           ERR="${ERR:0:60000}"
           echo "::error::${ERR}"
