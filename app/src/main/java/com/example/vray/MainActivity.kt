@@ -29,16 +29,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.core.splashscreen.installSplashScreen
 import com.example.vray.core.ConnectionState
 import com.example.vray.core.ProxyVpnService
+import com.example.vray.core.TrafficStats
 import com.example.vray.data.*
 import com.example.vray.ui.*
 import com.journeyapps.barcodescanner.ScanContract
@@ -75,7 +74,6 @@ class MainActivity : ComponentActivity() {
     ) { /* no-op either way — foreground service still works, notification just may not show */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
         super.onCreate(savedInstanceState)
         repo = Repository(this)
 
@@ -306,7 +304,7 @@ fun AppRoot(
                         Icon(Icons.Filled.SupportAgent, contentDescription = "پشتیبانی")
                     }
                     IconButton(onClick = { showSettingsSheet = true }) {
-                        Icon(SettingsIcon, contentDescription = "تنظیمات")
+                        Icon(Icons.Filled.SettingsIcon, contentDescription = "تنظیمات")
                     }
                 }
             )
