@@ -8,8 +8,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # GitHub doesn't allow referencing `secrets` directly inside `if:` conditions,
-    # so we copy it into a plain env var here and check that instead.
     env:
       HAS_SIGNING: ${{ secrets.KEYSTORE_BASE64 != '' }}
     steps:
@@ -29,11 +27,11 @@ jobs:
         run: |
           sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "platform-tools"
 
-      # These secrets are optional. Without them, only debug APKs are built below.
-      # To enable signed release builds, add these under repo Settings -> Secrets ->
-      # Actions: KEYSTORE_BASE64 (base64 of your .jks file), KEYSTORE_PASSWORD,
-      # KEY_ALIAS, KEY_PASSWORD. See README "Release signing" for how to get these
-      # from your local keystore.properties / keystore/parvaz-release.jks.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.7
+
       - name: Restore signing keystore from secrets
         if: env.HAS_SIGNING == 'true'
         run: |
@@ -46,11 +44,41 @@ jobs:
           keyPassword=${{ secrets.KEY_PASSWORD }}
           PROPS
 
+      # Run Gradle directly (instead of via an action) so we can capture full
+      # output to a file and, on failure, surface the real compiler errors as
+      # a workflow annotation -- readable via the GitHub API without anyone
+      # needing to click into the raw log by hand.
       - name: Build debug APKs (modern + legacy)
-        uses: gradle/gradle-build-action@v3
+        id: build_debug
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          gradle assembleModernDebug assembleLegacyDebug --no-daemon 2>&1 | tee build_debug.log
+
+      - name: Report debug build errors
+        if: steps.build_debug.outcome == 'failure'
+        run: |
+          {
+            echo "### Gradle debug build failed -- extracted errors"
+            echo '```'
+            grep -E "^e: |error:|FAILURE|Exception|What went wrong|Unresolved reference|Caused by|\* Where:|\* What went wrong" build_debug.log | tail -100 || tail -150 build_debug.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          ERR=$(grep -E "^e: |error:|FAILURE|Unresolved reference|What went wrong|Caused by" build_debug.log | tail -40 | tr '\n' '~')
+          ERR="${ERR//~/%0A}"
+          ERR="${ERR:0:60000}"
+          echo "::error::${ERR}"
+
+      - name: Upload raw debug build log
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          gradle-version: 8.7
-          arguments: assembleModernDebug assembleLegacyDebug --no-daemon
+          name: build-debug-log
+          path: build_debug.log
+
+      - name: Fail job if debug build failed
+        if: steps.build_debug.outcome == 'failure'
+        run: exit 1
 
       - name: Upload modern debug APK
         uses: actions/upload-artifact@v4
@@ -66,10 +94,29 @@ jobs:
 
       - name: Build signed release APKs (modern + legacy)
         if: env.HAS_SIGNING == 'true'
-        uses: gradle/gradle-build-action@v3
-        with:
-          gradle-version: 8.7
-          arguments: assembleModernRelease assembleLegacyRelease --no-daemon
+        id: build_release
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          gradle assembleModernRelease assembleLegacyRelease --no-daemon 2>&1 | tee build_release.log
+
+      - name: Report release build errors
+        if: env.HAS_SIGNING == 'true' && steps.build_release.outcome == 'failure'
+        run: |
+          {
+            echo "### Gradle release build failed -- extracted errors"
+            echo '```'
+            grep -E "^e: |error:|FAILURE|Exception|What went wrong|Unresolved reference|Caused by" build_release.log | tail -100 || tail -150 build_release.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          ERR=$(grep -E "^e: |error:|FAILURE|Unresolved reference|What went wrong|Caused by" build_release.log | tail -40 | tr '\n' '~')
+          ERR="${ERR//~/%0A}"
+          ERR="${ERR:0:60000}"
+          echo "::error::${ERR}"
+
+      - name: Fail job if release build failed
+        if: env.HAS_SIGNING == 'true' && steps.build_release.outcome == 'failure'
+        run: exit 1
 
       - name: Upload modern release APK
         if: env.HAS_SIGNING == 'true'
