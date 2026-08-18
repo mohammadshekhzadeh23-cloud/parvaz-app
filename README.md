@@ -15,7 +15,7 @@ product flavors:
 |---|---|---|
 | Target devices | Phones from ~2017 onward | Older / budget 32-bit phones |
 | Architectures | `arm64-v8a` + `armeabi-v7a` | `armeabi-v7a` only |
-| Min Android version | 7.0 (API 24) | 5.0 (API 21) |
+| Min Android version | 7.0 (API 24) | 7.0 (API 24) — the Xray-core library itself requires this floor |
 | Background stats polling | every 1.5s | every 3s (lighter on weak CPUs/battery) |
 | Typical APK size | ~25–28 MB | ~15–17 MB |
 

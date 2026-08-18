@@ -30,8 +30,10 @@ android {
 
     // Two variants from one codebase:
     //  - "modern": arm64-v8a + armeabi-v7a, minSdk 24 (Android 7+), full polling rate.
-    //  - "legacy": armeabi-v7a only (32-bit, older/budget chips), minSdk 21 (Android 5+),
-    //              slower background polling to go easier on weak CPUs/battery.
+    //  - "legacy": armeabi-v7a only (32-bit, older/budget chips), same minSdk 24 --
+    //              the Xray-core native library itself requires API 24 as a floor,
+    //              so "legacy" only differs by dropping the arm64 binary and polling
+    //              less often, not by supporting an older Android version.
     flavorDimensions += "device"
     productFlavors {
         create("modern") {
@@ -41,7 +43,6 @@ android {
         }
         create("legacy") {
             dimension = "device"
-            minSdk = 21
             versionNameSuffix = "-legacy"
             ndk { abiFilters += listOf("armeabi-v7a") }
             buildConfigField("boolean", "IS_LEGACY", "true")
