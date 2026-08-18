@@ -20,7 +20,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.NetworkPing
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings as SettingsIcon
@@ -615,7 +615,7 @@ fun ServerRow(
                     }
                 }) {
                     if (pinging) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Filled.NetworkPing, contentDescription = "تست پینگ")
+                    else Icon(Icons.Filled.Speed, contentDescription = "تست پینگ")
                 }
                 IconButton(onClick = onEdit) {
                     Icon(Icons.Filled.Edit, contentDescription = "ویرایش")
