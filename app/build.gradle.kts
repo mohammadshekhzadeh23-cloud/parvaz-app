@@ -1,3 +1,6 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -7,10 +10,10 @@ plugins {
 // If the file isn't present (e.g. a fresh clone without the keystore), release builds
 // simply stay unsigned instead of failing, so `assembleXxxDebug` always still works.
 val keystorePropertiesFile = rootProject.file("keystore.properties")
-val keystoreProperties = java.util.Properties()
+val keystoreProperties = Properties()
 val hasSigningConfig = keystorePropertiesFile.exists()
 if (hasSigningConfig) {
-    keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
 android {
