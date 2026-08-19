@@ -37,9 +37,11 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.example.vray.core.ConnectionState
 import com.example.vray.core.ProxyVpnService
 import com.example.vray.core.TrafficStats
+import com.example.vray.core.WireGuardManager
 import com.example.vray.data.*
 import com.example.vray.ui.*
 import com.journeyapps.barcodescanner.ScanContract
@@ -148,6 +150,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startVpn(profileId: String) {
+        val profile = repo.loadProfiles().firstOrNull { it.id == profileId } ?: return
+        if (profile.protocol == "wireguard") {
+            lifecycleScope.launch {
+                WireGuardManager.connect(this@MainActivity, profile.name, profile.wgConfigText)
+            }
+            return
+        }
         val svc = Intent(this, ProxyVpnService::class.java).apply {
             action = ProxyVpnService.ACTION_CONNECT
             putExtra(ProxyVpnService.EXTRA_PROFILE_ID, profileId)
@@ -156,6 +165,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun disconnect() {
+        val activeProfile = repo.loadProfiles().firstOrNull { it.id == repo.loadSelectedProfileId() }
+        if (activeProfile?.protocol == "wireguard") {
+            lifecycleScope.launch { WireGuardManager.disconnect(this@MainActivity) }
+            return
+        }
         val svc = Intent(this, ProxyVpnService::class.java).apply {
             action = ProxyVpnService.ACTION_DISCONNECT
         }
@@ -187,9 +201,17 @@ fun AppRoot(
         if (manual != null) subGroups + listOf(manual) else subGroups
     }
 
-    val connState by ProxyVpnService.state.collectAsState()
-    val trafficStats by ProxyVpnService.stats.collectAsState()
-    val lastError by ProxyVpnService.lastError.collectAsState()
+    val isWireGuardSelected = profiles.firstOrNull { it.id == selectedId }?.protocol == "wireguard"
+
+    val xrayState by ProxyVpnService.state.collectAsState()
+    val wgState by WireGuardManager.state.collectAsState()
+    val connState = if (isWireGuardSelected) wgState else xrayState
+
+    val trafficStats by ProxyVpnService.stats.collectAsState() // WireGuard traffic stats not wired yet
+
+    val xrayError by ProxyVpnService.lastError.collectAsState()
+    val wgError by WireGuardManager.lastError.collectAsState()
+    val lastError = if (isWireGuardSelected) wgError else xrayError
 
     var showAddDialog by remember { mutableStateOf(false) }
     var showSettingsSheet by remember { mutableStateOf(false) }
@@ -520,6 +542,22 @@ fun AppRoot(
                     scope.launch { snackbarHostState.showSnackbar("این لینک خوانده نشد — فرمتش رو بررسی کن") }
                     false
                 }
+            },
+            onAddWireGuard = { raw ->
+                val parsed = WireGuardParser.parse(raw)
+                if (parsed != null) {
+                    profiles = (profiles + parsed).toMutableList()
+                    repo.saveProfiles(profiles)
+                    if (selectedId == null) {
+                        selectedId = parsed.id
+                        repo.saveSelectedProfileId(parsed.id)
+                    }
+                    showAddDialog = false
+                    true
+                } else {
+                    scope.launch { snackbarHostState.showSnackbar("این کانفیگ WireGuard خوانده نشد") }
+                    false
+                }
             }
         )
     }
@@ -739,7 +777,13 @@ fun ServerRow(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddServerDialog(onDismiss: () -> Unit, onScanQr: () -> Unit, onAdd: (String) -> Boolean) {
+fun AddServerDialog(
+    onDismiss: () -> Unit,
+    onScanQr: () -> Unit,
+    onAdd: (String) -> Boolean,
+    onAddWireGuard: (String) -> Boolean
+) {
+    var mode by remember { mutableStateOf("link") } // "link" | "wireguard"
     var text by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
@@ -749,35 +793,66 @@ fun AddServerDialog(onDismiss: () -> Unit, onScanQr: () -> Unit, onAdd: (String)
         title = { Text("افزودن سرور") },
         text = {
             Column {
-                Text(
-                    "لینک vmess:// vless:// trojan:// یا ss:// را وارد کن، یا کد QR رو اسکن کن.",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onScanQr, modifier = Modifier.weight(1f)) {
-                        Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("اسکن QR")
+                    FilterChip(
+                        selected = mode == "link",
+                        onClick = { mode = "link"; error = null },
+                        label = { Text("لینک") }
+                    )
+                    FilterChip(
+                        selected = mode == "wireguard",
+                        onClick = { mode = "wireguard"; error = null },
+                        label = { Text("WireGuard") }
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+
+                if (mode == "link") {
+                    Text(
+                        "لینک vmess:// vless:// trojan:// یا ss:// را وارد کن، یا کد QR رو اسکن کن.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = onScanQr, modifier = Modifier.weight(1f)) {
+                            Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("اسکن QR")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                clipboardManager.getText()?.text?.let { text = it; error = null }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.ContentPaste, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("چسباندن")
+                        }
                     }
+                } else {
+                    Text(
+                        "کل متن کانفیگ WireGuard (شامل [Interface] و [Peer]) را پیست کن.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(8.dp))
                     OutlinedButton(
-                        onClick = {
-                            clipboardManager.getText()?.text?.let { text = it; error = null }
-                        },
-                        modifier = Modifier.weight(1f)
+                        onClick = { clipboardManager.getText()?.text?.let { text = it; error = null } },
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Filled.ContentPaste, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
-                        Text("چسباندن")
+                        Text("چسباندن از کلیپ‌بورد")
                     }
                 }
+
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it; error = null },
                     modifier = Modifier.fillMaxWidth(),
                     isError = error != null,
-                    minLines = 3
+                    minLines = if (mode == "wireguard") 6 else 3
                 )
                 error?.let {
                     Spacer(Modifier.height(4.dp))
@@ -787,7 +862,9 @@ fun AddServerDialog(onDismiss: () -> Unit, onScanQr: () -> Unit, onAdd: (String)
         },
         confirmButton = {
             TextButton(onClick = {
-                if (!onAdd(text)) error = "این لینک خوانده نشد — فرمتش رو بررسی کن"
+                val ok = if (mode == "wireguard") onAddWireGuard(text) else onAdd(text)
+                if (!ok) error = if (mode == "wireguard") "این کانفیگ خوانده نشد — [Interface] و [Peer] رو چک کن"
+                    else "این لینک خوانده نشد — فرمتش رو بررسی کن"
             }) { Text("افزودن") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } }
@@ -797,6 +874,30 @@ fun AddServerDialog(onDismiss: () -> Unit, onScanQr: () -> Unit, onAdd: (String)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditServerDialog(profile: ProxyProfile, onDismiss: () -> Unit, onSave: (ProxyProfile) -> Unit) {
+    if (profile.protocol == "wireguard") {
+        var name by remember { mutableStateOf(profile.name) }
+        var wgText by remember { mutableStateOf(profile.wgConfigText) }
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("ویرایش سرور WireGuard") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("نام") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = wgText, onValueChange = { wgText = it },
+                        label = { Text("متن کانفیگ") }, modifier = Modifier.fillMaxWidth(), minLines = 8
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { onSave(profile.copy(name = name, wgConfigText = wgText)) }) { Text("ذخیره") }
+            },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } }
+        )
+        return
+    }
+
     var name by remember { mutableStateOf(profile.name) }
     var address by remember { mutableStateOf(profile.address) }
     var port by remember { mutableStateOf(profile.port.toString()) }

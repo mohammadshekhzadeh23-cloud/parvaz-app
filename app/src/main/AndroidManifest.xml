@@ -46,6 +46,17 @@
             </intent-filter>
         </service>
 
+        <!-- Provided by com.wireguard.android:tunnel — handles WireGuard tunnels. -->
+        <service
+            android:name="com.wireguard.android.backend.GoBackend$VpnService"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".widget.VpnWidgetProvider"
             android:exported="false">

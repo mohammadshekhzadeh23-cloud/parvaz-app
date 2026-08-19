@@ -26,7 +26,8 @@ data class ProxyProfile(
     var publicKey: String = "",    // reality
     var shortId: String = "",      // reality
     var alpn: String = "",
-    var subscriptionId: String? = null // null = added manually / by pasted link or QR
+    var subscriptionId: String? = null, // null = added manually / by pasted link or QR
+    var wgConfigText: String = "" // full wg-quick style text, only used when protocol == "wireguard"
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id); put("name", name); put("protocol", protocol)
@@ -36,6 +37,7 @@ data class ProxyProfile(
         put("fingerprint", fingerprint); put("flow", flow)
         put("publicKey", publicKey); put("shortId", shortId); put("alpn", alpn)
         subscriptionId?.let { put("subscriptionId", it) }
+        if (wgConfigText.isNotEmpty()) put("wgConfigText", wgConfigText)
     }
 
     companion object {
@@ -58,7 +60,8 @@ data class ProxyProfile(
             publicKey = o.optString("publicKey", ""),
             shortId = o.optString("shortId", ""),
             alpn = o.optString("alpn", ""),
-            subscriptionId = if (o.has("subscriptionId")) o.optString("subscriptionId") else null
+            subscriptionId = if (o.has("subscriptionId")) o.optString("subscriptionId") else null,
+            wgConfigText = o.optString("wgConfigText", "")
         )
     }
 }
