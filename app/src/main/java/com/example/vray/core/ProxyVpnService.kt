@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
 import libv2ray.Libv2ray
+import java.io.File
 
 class ProxyVpnService : VpnService(), CoreCallbackHandler {
 
@@ -77,9 +78,31 @@ class ProxyVpnService : VpnService(), CoreCallbackHandler {
     override fun onCreate() {
         super.onCreate()
         repo = Repository(this)
+        copyGeoAssetsIfNeeded()
         Libv2ray.initCoreEnv(filesDir.absolutePath, "")
         controller = Libv2ray.newCoreController(this)
         registerNetworkCallback()
+    }
+
+    /**
+     * Xray-core needs geoip.dat/geosite.dat as real files on disk (it opens them
+     * directly, not through Android's AssetManager). They ship inside the
+     * libv2ray.aar's assets/ folder, merged into our APK's assets at build time --
+     * so on first run we copy them out to filesDir once, where initCoreEnv points.
+     */
+    private fun copyGeoAssetsIfNeeded() {
+        for (name in listOf("geoip.dat", "geosite.dat")) {
+            val dest = File(filesDir, name)
+            if (dest.exists() && dest.length() > 0) continue
+            try {
+                assets.open(name).use { input ->
+                    dest.outputStream().use { output -> input.copyTo(output) }
+                }
+            } catch (e: Exception) {
+                // If this fails, startLoop() will raise a clear "failed to open geoip.dat"
+                // error later, which the app already surfaces to the user with details.
+            }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
