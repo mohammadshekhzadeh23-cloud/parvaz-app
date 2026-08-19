@@ -405,7 +405,7 @@ fun AppRoot(
 
             subscriptions.filter { it.expireAtEpochSec != null || (it.dataLimitBytes ?: 0) > 0 }.forEach { sub ->
                 Spacer(Modifier.height(12.dp))
-                SubscriptionStatusCard(sub)
+                SubscriptionStatusCard(sub, onRefresh = { refreshSubscription(sub) })
             }
 
             Spacer(Modifier.height(16.dp))
@@ -611,10 +611,19 @@ fun AppRoot(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SubscriptionStatusCard(sub: Subscription) {
+fun SubscriptionStatusCard(sub: Subscription, onRefresh: () -> Unit) {
     OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            Text(sub.label, style = MaterialTheme.typography.labelLarge)
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(sub.label, style = MaterialTheme.typography.labelLarge)
+                IconButton(onClick = onRefresh, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Filled.Refresh, contentDescription = "بروزرسانی وضعیت اشتراک")
+                }
+            }
             sub.expireAtEpochSec?.let { expireSec ->
                 val daysLeft = TimeUnit.SECONDS.toDays(expireSec - System.currentTimeMillis() / 1000)
                 val text = if (daysLeft >= 0) "$daysLeft روز تا پایان اشتراک" else "اشتراک منقضی شده"

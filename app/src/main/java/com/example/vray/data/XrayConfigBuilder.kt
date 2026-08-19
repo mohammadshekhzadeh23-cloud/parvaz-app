@@ -89,6 +89,27 @@ object XrayConfigBuilder {
         }
         arr.put(socks)
         arr.put(http)
+
+        // The real bridge between Android's VpnService TUN device and Xray: without this,
+        // AndroidLibXrayLite's StartLoop(config, tunFd) has nothing that actually reads
+        // packets from the tun fd, so captured traffic just sits there and nothing works.
+        // The fd itself comes from the "xray.tun.fd" env var that StartLoop already sets;
+        // this inbound is what makes Xray actually consume it.
+        val tun = JSONObject().apply {
+            put("tag", "tun-in")
+            put("port", 0)
+            put("protocol", "tun")
+            put("settings", JSONObject().apply {
+                put("name", "xray0")
+                put("mtu", 1500)
+            })
+            put("sniffing", JSONObject().apply {
+                put("enabled", true)
+                put("destOverride", JSONArray(listOf("http", "tls")))
+            })
+        }
+        arr.put(tun)
+
         return arr
     }
 
