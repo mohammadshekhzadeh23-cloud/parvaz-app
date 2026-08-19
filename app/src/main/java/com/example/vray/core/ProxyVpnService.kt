@@ -295,7 +295,7 @@ class ProxyVpnService : VpnService(), CoreCallbackHandler {
             PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, NOTIF_CHANNEL)
-            .setContentTitle("پرواز")
+            .setContentTitle("VELOX VPN")
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_vpn)
             .setContentIntent(pi)

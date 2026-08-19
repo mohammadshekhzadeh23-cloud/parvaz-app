@@ -313,7 +313,7 @@ fun AppRoot(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("پرواز") },
+                title = { Text("VELOX VPN") },
                 actions = {
                     IconButton(onClick = { showSupportDialog = true }) {
                         Icon(Icons.Filled.SupportAgent, contentDescription = "پشتیبانی")

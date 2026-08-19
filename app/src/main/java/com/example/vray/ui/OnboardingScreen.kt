@@ -17,7 +17,7 @@ private data class OnboardingSlide(val title: String, val body: String)
 
 private val slides = listOf(
     OnboardingSlide(
-        "به پرواز خوش اومدی",
+        "به VELOX VPN خوش اومدی",
         "با چند ضربه به بهترین سرور وصل شو و مرور امن و سریع رو تجربه کن."
     ),
     OnboardingSlide(
