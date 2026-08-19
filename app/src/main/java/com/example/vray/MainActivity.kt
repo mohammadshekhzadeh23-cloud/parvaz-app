@@ -161,10 +161,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private sealed class Screen {
-    object Main : Screen()
-    object AppPicker : Screen()
-}
+private enum class Screen { Main, AppPicker }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -218,7 +215,7 @@ fun AppRoot(
         }
     }
 
-    if (screen is Screen.AppPicker) {
+    if (screen == Screen.AppPicker) {
         AppPickerScreen(
             initiallySelected = settings.selectedApps,
             onBack = { screen = Screen.Main },
