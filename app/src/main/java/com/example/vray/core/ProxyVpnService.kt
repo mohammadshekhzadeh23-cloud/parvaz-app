@@ -11,6 +11,7 @@ import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.vray.BuildConfig
 import com.example.vray.MainActivity
@@ -143,6 +144,11 @@ class ProxyVpnService : VpnService(), CoreCallbackHandler {
 
     private suspend fun handleConnectFailure(e: Exception, settings: AppSettings) {
         _lastError.value = e.message ?: "Failed to start tunnel"
+        // Full trace (with the real underlying JNI/config error) so the UI can offer
+        // a "details" view instead of just the short message above.
+        getSharedPreferences("vray_crash", MODE_PRIVATE).edit()
+            .putString("last_connect_error", Log.getStackTraceString(e))
+            .apply()
         _state.value = ConnectionState.ERROR
         VpnWidgetProvider.updateAll(this@ProxyVpnService)
 

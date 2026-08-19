@@ -106,6 +106,9 @@ class Repository(context: Context) {
         context.getSharedPreferences("vray_crash", Context.MODE_PRIVATE).edit().clear().apply()
     }
 
+    fun getLastConnectError(context: Context): String? =
+        context.getSharedPreferences("vray_crash", Context.MODE_PRIVATE).getString("last_connect_error", null)
+
     fun setOnboardingDone() {
         prefs.edit().putBoolean("onboarding_done", true).apply()
     }

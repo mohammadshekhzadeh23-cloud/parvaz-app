@@ -39,6 +39,25 @@ object XrayConfigBuilder {
         return root.toString()
     }
 
+    /**
+     * Minimal config for latency testing only: just the one outbound, no local
+     * inbounds/ports, no routing rules. Testing several servers concurrently with
+     * the full app config (which binds fixed local SOCKS/HTTP ports) makes every
+     * test collide on the same ports and return bogus results — this avoids that.
+     */
+    fun buildOutboundOnly(profile: ProxyProfile): String {
+        val root = JSONObject()
+        val arr = JSONArray()
+        arr.put(JSONObject().apply {
+            put("tag", "proxy")
+            put("protocol", profile.protocol)
+            put("settings", buildProtocolSettings(profile))
+            put("streamSettings", buildStreamSettings(profile))
+        })
+        root.put("outbounds", arr)
+        return root.toString()
+    }
+
     private fun buildDns(settings: AppSettings): JSONObject {
         val servers = JSONArray()
         settings.customDns.forEach { servers.put(it) }

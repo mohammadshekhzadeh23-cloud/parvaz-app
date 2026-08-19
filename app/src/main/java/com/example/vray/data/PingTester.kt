@@ -9,7 +9,7 @@ object PingTester {
     suspend fun measure(profile: ProxyProfile, testUrl: String = "https://www.google.com/generate_204"): Long =
         withContext(Dispatchers.IO) {
             try {
-                val config = XrayConfigBuilder.build(profile, AppSettings())
+                val config = XrayConfigBuilder.buildOutboundOnly(profile)
                 Libv2ray.measureOutboundDelay(config, testUrl)
             } catch (e: Exception) {
                 -1L

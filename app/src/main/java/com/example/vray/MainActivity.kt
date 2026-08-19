@@ -14,10 +14,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Speed
@@ -178,6 +180,13 @@ fun AppRoot(
     var selectedId by remember { mutableStateOf(repo.loadSelectedProfileId()) }
     var settings by remember { mutableStateOf(repo.loadSettings()) }
 
+    val groupedProfiles: List<Pair<Subscription?, List<ProxyProfile>>> = remember(profiles, subscriptions) {
+        val bySub = profiles.groupBy { it.subscriptionId }
+        val subGroups = subscriptions.mapNotNull { sub -> bySub[sub.id]?.let { sub to it } }
+        val manual = bySub[null]?.takeIf { it.isNotEmpty() }?.let { null to it }
+        if (manual != null) subGroups + listOf(manual) else subGroups
+    }
+
     val connState by ProxyVpnService.state.collectAsState()
     val trafficStats by ProxyVpnService.stats.collectAsState()
     val lastError by ProxyVpnService.lastError.collectAsState()
@@ -185,16 +194,36 @@ fun AppRoot(
     var showAddDialog by remember { mutableStateOf(false) }
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showSupportDialog by remember { mutableStateOf(false) }
+    var showErrorDetail by remember { mutableStateOf(false) }
     var editingProfile by remember { mutableStateOf<ProxyProfile?>(null) }
     var screen by rememberSaveable { mutableStateOf<Screen>(Screen.Main) }
     var quickConnecting by remember { mutableStateOf(false) }
+    var pingingIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var pingResults by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
+    fun pingOne(profile: ProxyProfile) {
+        if (profile.id in pingingIds) return
+        pingingIds = pingingIds + profile.id
+        scope.launch {
+            val ms = PingTester.measure(profile)
+            pingingIds = pingingIds - profile.id
+            pingResults = pingResults + (profile.id to ms)
+        }
+    }
+
+    fun pingAllVisible() {
+        groupedProfiles.flatMap { it.second }.forEach { pingOne(it) }
+    }
+
     LaunchedEffect(lastError) {
-        lastError?.let { snackbarHostState.showSnackbar(it) }
+        lastError?.let {
+            val result = snackbarHostState.showSnackbar(it, actionLabel = "جزئیات")
+            if (result == SnackbarResult.ActionPerformed) showErrorDetail = true
+        }
     }
 
     LaunchedEffect(scannedLink) {
@@ -299,13 +328,6 @@ fun AppRoot(
         if (wasSelectedInGroup) selectedId = null
     }
 
-    val groupedProfiles: List<Pair<Subscription?, List<ProxyProfile>>> = remember(profiles, subscriptions) {
-        val bySub = profiles.groupBy { it.subscriptionId }
-        val subGroups = subscriptions.mapNotNull { sub -> bySub[sub.id]?.let { sub to it } }
-        val manual = bySub[null]?.takeIf { it.isNotEmpty() }?.let { null to it }
-        if (manual != null) subGroups + listOf(manual) else subGroups
-    }
-
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
@@ -365,7 +387,20 @@ fun AppRoot(
             }
 
             Spacer(Modifier.height(16.dp))
-            Text("سرورها", style = MaterialTheme.typography.titleMedium)
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("سرورها", style = MaterialTheme.typography.titleMedium)
+                if (groupedProfiles.isNotEmpty()) {
+                    TextButton(onClick = { pingAllVisible() }) {
+                        Icon(Icons.Filled.Speed, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("پینگ همه")
+                    }
+                }
+            }
             Spacer(Modifier.height(4.dp))
 
             if (groupedProfiles.isEmpty()) {
@@ -377,31 +412,94 @@ fun AppRoot(
             }
 
             groupedProfiles.forEach { (sub, list) ->
-                Text(
-                    sub?.label ?: "افزوده شده دستی",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
-                )
-                list.forEach { profile ->
-                    ServerRow(
-                        profile = profile,
-                        selected = profile.id == selectedId,
-                        onSelect = {
-                            selectedId = profile.id
-                            repo.saveSelectedProfileId(profile.id)
-                        },
-                        onEdit = { editingProfile = profile },
-                        onDelete = {
-                            profiles = profiles.filterNot { it.id == profile.id }.toMutableList()
-                            repo.saveProfiles(profiles)
-                            if (selectedId == profile.id) selectedId = null
+                Spacer(Modifier.height(10.dp))
+                ElevatedCard(Modifier.fillMaxWidth()) {
+                    Column {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    Modifier
+                                        .padding(end = 8.dp)
+                                        .size(8.dp)
+                                        .background(
+                                            if (sub != null) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.tertiary,
+                                            shape = androidx.compose.foundation.shape.CircleShape
+                                        )
+                                )
+                                Text(
+                                    sub?.label ?: "افزوده شده دستی",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            Surface(
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+                                color = MaterialTheme.colorScheme.surfaceVariant
+                            ) {
+                                Text(
+                                    "${list.size} سرور",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                )
+                            }
                         }
-                    )
+                        Divider()
+                        list.forEach { profile ->
+                            ServerRow(
+                                profile = profile,
+                                selected = profile.id == selectedId,
+                                pinging = profile.id in pingingIds,
+                                pingResult = pingResults[profile.id],
+                                onSelect = {
+                                    selectedId = profile.id
+                                    repo.saveSelectedProfileId(profile.id)
+                                },
+                                onPing = { pingOne(profile) },
+                                onEdit = { editingProfile = profile },
+                                onDelete = {
+                                    profiles = profiles.filterNot { it.id == profile.id }.toMutableList()
+                                    repo.saveProfiles(profiles)
+                                    if (selectedId == profile.id) selectedId = null
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }
     }
+
+    if (showErrorDetail) {
+        AlertDialog(
+            onDismissRequest = { showErrorDetail = false },
+            title = { Text("جزئیات خطای اتصال") },
+            text = {
+                val detail = repo.getLastConnectError(context) ?: "جزئیاتی ثبت نشده"
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    SelectionContainer {
+                        Text(detail, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val detail = repo.getLastConnectError(context) ?: ""
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, detail)
+                    }
+                    context.startActivity(Intent.createChooser(send, "ارسال گزارش خطا"))
+                }) { Text("اشتراک‌گذاری") }
+            },
+            dismissButton = { TextButton(onClick = { showErrorDetail = false }) { Text("بستن") } }
+        )
+    }
+
 
     if (showAddDialog) {
         AddServerDialog(
@@ -598,36 +696,31 @@ fun formatBytes(bytes: Long): String {
 fun ServerRow(
     profile: ProxyProfile,
     selected: Boolean,
+    pinging: Boolean,
+    pingResult: Long?,
     onSelect: () -> Unit,
+    onPing: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
-    var pingResult by remember(profile.id) { mutableStateOf<String?>(null) }
-    var pinging by remember(profile.id) { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
+    val pingLabel = when {
+        pingResult == null -> null
+        pingResult in 0..60000 -> "${pingResult} ms"
+        else -> "بدون پاسخ"
+    }
 
     ListItem(
         headlineContent = { Text(profile.name) },
         supportingContent = {
             Text(
                 "${profile.protocol.uppercase()} · ${profile.address}:${profile.port}" +
-                    (pingResult?.let { "  ·  $it" } ?: "")
+                    (pingLabel?.let { "  ·  $it" } ?: "")
             )
         },
         leadingContent = { RadioButton(selected = selected, onClick = onSelect) },
         trailingContent = {
             Row {
-                IconButton(onClick = {
-                    if (!pinging) {
-                        pinging = true
-                        pingResult = null
-                        scope.launch {
-                            val ms = PingTester.measure(profile)
-                            pingResult = if (ms in 0..60000) "${ms} ms" else "بدون پاسخ"
-                            pinging = false
-                        }
-                    }
-                }) {
+                IconButton(onClick = onPing, enabled = !pinging) {
                     if (pinging) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                     else Icon(Icons.Filled.Speed, contentDescription = "تست پینگ")
                 }
@@ -649,6 +742,7 @@ fun ServerRow(
 fun AddServerDialog(onDismiss: () -> Unit, onScanQr: () -> Unit, onAdd: (String) -> Boolean) {
     var text by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -660,10 +754,22 @@ fun AddServerDialog(onDismiss: () -> Unit, onScanQr: () -> Unit, onAdd: (String)
                     style = MaterialTheme.typography.bodySmall
                 )
                 Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = onScanQr, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("اسکن QR")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onScanQr, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("اسکن QR")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            clipboardManager.getText()?.text?.let { text = it; error = null }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Filled.ContentPaste, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("چسباندن")
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
