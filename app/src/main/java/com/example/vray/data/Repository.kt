@@ -98,6 +98,14 @@ class Repository(context: Context) {
 
     fun isOnboardingDone(): Boolean = prefs.getBoolean("onboarding_done", false)
 
+    /** Crash log is stored in its own SharedPreferences file by VRayApplication's handler. */
+    fun getLastCrash(context: Context): String? =
+        context.getSharedPreferences("vray_crash", Context.MODE_PRIVATE).getString("last_crash", null)
+
+    fun clearLastCrash(context: Context) {
+        context.getSharedPreferences("vray_crash", Context.MODE_PRIVATE).edit().clear().apply()
+    }
+
     fun setOnboardingDone() {
         prefs.edit().putBoolean("onboarding_done", true).apply()
     }

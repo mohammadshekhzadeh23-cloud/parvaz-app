@@ -89,14 +89,29 @@ class MainActivity : ComponentActivity() {
         setContent {
             VRayTheme {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    var crashText by remember { mutableStateOf(repo.getLastCrash(this)) }
                     var onboardingDone by remember { mutableStateOf(repo.isOnboardingDone()) }
-                    if (!onboardingDone) {
-                        OnboardingScreen(onDone = {
+
+                    when {
+                        crashText != null -> CrashScreen(
+                            trace = crashText!!,
+                            onDismiss = {
+                                repo.clearLastCrash(this)
+                                crashText = null
+                            },
+                            onShare = {
+                                val send = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, crashText)
+                                }
+                                startActivity(Intent.createChooser(send, "ارسال گزارش خطا"))
+                            }
+                        )
+                        !onboardingDone -> OnboardingScreen(onDone = {
                             repo.setOnboardingDone()
                             onboardingDone = true
                         })
-                    } else {
-                        AppRoot(
+                        else -> AppRoot(
                             repo = repo,
                             scannedLink = scannedLink,
                             onScannedConsumed = { scannedLink = null },
