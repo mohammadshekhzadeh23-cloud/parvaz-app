@@ -476,6 +476,7 @@ fun AppRoot(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SubscriptionStatusCard(sub: Subscription) {
     OutlinedCard(Modifier.fillMaxWidth()) {
@@ -501,6 +502,7 @@ fun SubscriptionStatusCard(sub: Subscription) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConnectCard(
     state: ConnectionState,
