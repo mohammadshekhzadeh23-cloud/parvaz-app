@@ -27,7 +27,8 @@ data class ProxyProfile(
     var shortId: String = "",      // reality
     var alpn: String = "",
     var subscriptionId: String? = null, // null = added manually / by pasted link or QR
-    var wgConfigText: String = "" // full wg-quick style text, only used when protocol == "wireguard"
+    var wgConfigText: String = "", // full wg-quick style text, only used when protocol == "wireguard"
+    var ovpnConfigText: String = "" // full .ovpn text, only used when protocol == "openvpn"
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id); put("name", name); put("protocol", protocol)
@@ -38,6 +39,7 @@ data class ProxyProfile(
         put("publicKey", publicKey); put("shortId", shortId); put("alpn", alpn)
         subscriptionId?.let { put("subscriptionId", it) }
         if (wgConfigText.isNotEmpty()) put("wgConfigText", wgConfigText)
+        if (ovpnConfigText.isNotEmpty()) put("ovpnConfigText", ovpnConfigText)
     }
 
     companion object {
@@ -61,7 +63,8 @@ data class ProxyProfile(
             shortId = o.optString("shortId", ""),
             alpn = o.optString("alpn", ""),
             subscriptionId = if (o.has("subscriptionId")) o.optString("subscriptionId") else null,
-            wgConfigText = o.optString("wgConfigText", "")
+            wgConfigText = o.optString("wgConfigText", ""),
+            ovpnConfigText = o.optString("ovpnConfigText", "")
         )
     }
 }

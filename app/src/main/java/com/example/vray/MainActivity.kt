@@ -22,6 +22,9 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
@@ -39,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.example.vray.core.ConnectionState
+import com.example.vray.core.OpenVpnManager
 import com.example.vray.core.ProxyVpnService
 import com.example.vray.core.TrafficStats
 import com.example.vray.core.WireGuardManager
@@ -58,9 +62,25 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var repo: Repository
     private var scannedLink by mutableStateOf<String?>(null)
+    private var wgFileText by mutableStateOf<String?>(null)
+    private var ovpnFileText by mutableStateOf<String?>(null)
 
     private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
         result.contents?.let { scannedLink = it }
+    }
+
+    private val wgFilePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { readFileText(it)?.let { text -> wgFileText = text } }
+    }
+
+    private val ovpnFilePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { readFileText(it)?.let { text -> ovpnFileText = text } }
+    }
+
+    private fun readFileText(uri: android.net.Uri): String? = try {
+        contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+    } catch (e: Exception) {
+        null
     }
 
     private val vpnPermissionLauncher = registerForActivityResult(
@@ -120,6 +140,12 @@ class MainActivity : ComponentActivity() {
                             scannedLink = scannedLink,
                             onScannedConsumed = { scannedLink = null },
                             onScanQr = { launchQrScan() },
+                            wgFileText = wgFileText,
+                            onWgFileConsumed = { wgFileText = null },
+                            onPickWgFile = { wgFilePickerLauncher.launch("*/*") },
+                            ovpnFileText = ovpnFileText,
+                            onOvpnFileConsumed = { ovpnFileText = null },
+                            onPickOvpnFile = { ovpnFilePickerLauncher.launch("*/*") },
                             onConnect = { profileId -> requestConnect(profileId) },
                             onDisconnect = { disconnect() }
                         )
@@ -157,6 +183,12 @@ class MainActivity : ComponentActivity() {
             }
             return
         }
+        if (profile.protocol == "openvpn") {
+            lifecycleScope.launch {
+                OpenVpnManager.connect(this@MainActivity, profile.name, profile.ovpnConfigText)
+            }
+            return
+        }
         val svc = Intent(this, ProxyVpnService::class.java).apply {
             action = ProxyVpnService.ACTION_CONNECT
             putExtra(ProxyVpnService.EXTRA_PROFILE_ID, profileId)
@@ -168,6 +200,10 @@ class MainActivity : ComponentActivity() {
         val activeProfile = repo.loadProfiles().firstOrNull { it.id == repo.loadSelectedProfileId() }
         if (activeProfile?.protocol == "wireguard") {
             lifecycleScope.launch { WireGuardManager.disconnect(this@MainActivity) }
+            return
+        }
+        if (activeProfile?.protocol == "openvpn") {
+            OpenVpnManager.disconnect(this@MainActivity)
             return
         }
         val svc = Intent(this, ProxyVpnService::class.java).apply {
@@ -186,6 +222,12 @@ fun AppRoot(
     scannedLink: String?,
     onScannedConsumed: () -> Unit,
     onScanQr: () -> Unit,
+    wgFileText: String?,
+    onWgFileConsumed: () -> Unit,
+    onPickWgFile: () -> Unit,
+    ovpnFileText: String?,
+    onOvpnFileConsumed: () -> Unit,
+    onPickOvpnFile: () -> Unit,
     onConnect: (String) -> Unit,
     onDisconnect: () -> Unit
 ) {
@@ -201,17 +243,27 @@ fun AppRoot(
         if (manual != null) subGroups + listOf(manual) else subGroups
     }
 
-    val isWireGuardSelected = profiles.firstOrNull { it.id == selectedId }?.protocol == "wireguard"
+    val selectedProtocol = profiles.firstOrNull { it.id == selectedId }?.protocol
 
     val xrayState by ProxyVpnService.state.collectAsState()
     val wgState by WireGuardManager.state.collectAsState()
-    val connState = if (isWireGuardSelected) wgState else xrayState
+    val ovpnState by OpenVpnManager.state.collectAsState()
+    val connState = when (selectedProtocol) {
+        "wireguard" -> wgState
+        "openvpn" -> ovpnState
+        else -> xrayState
+    }
 
-    val trafficStats by ProxyVpnService.stats.collectAsState() // WireGuard traffic stats not wired yet
+    val trafficStats by ProxyVpnService.stats.collectAsState() // only wired up for Xray so far
 
     val xrayError by ProxyVpnService.lastError.collectAsState()
     val wgError by WireGuardManager.lastError.collectAsState()
-    val lastError = if (isWireGuardSelected) wgError else xrayError
+    val ovpnError by OpenVpnManager.lastError.collectAsState()
+    val lastError = when (selectedProtocol) {
+        "wireguard" -> wgError
+        "openvpn" -> ovpnError
+        else -> xrayError
+    }
 
     var showAddDialog by remember { mutableStateOf(false) }
     var showSettingsSheet by remember { mutableStateOf(false) }
@@ -222,6 +274,7 @@ fun AppRoot(
     var quickConnecting by remember { mutableStateOf(false) }
     var pingingIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var pingResults by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    var expandedGroups by rememberSaveable { mutableStateOf<Set<String>>(emptySet()) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -263,6 +316,42 @@ fun AppRoot(
                 snackbarHostState.showSnackbar("کد QR قابل خواندن نبود")
             }
             onScannedConsumed()
+        }
+    }
+
+    LaunchedEffect(wgFileText) {
+        wgFileText?.let { raw ->
+            val parsed = WireGuardParser.parse(raw)
+            if (parsed != null) {
+                profiles = (profiles + parsed).toMutableList()
+                repo.saveProfiles(profiles)
+                if (selectedId == null) {
+                    selectedId = parsed.id
+                    repo.saveSelectedProfileId(parsed.id)
+                }
+                snackbarHostState.showSnackbar("سرور «${parsed.name}» اضافه شد")
+            } else {
+                snackbarHostState.showSnackbar("این فایل WireGuard خوانده نشد")
+            }
+            onWgFileConsumed()
+        }
+    }
+
+    LaunchedEffect(ovpnFileText) {
+        ovpnFileText?.let { raw ->
+            val parsed = OpenVpnParser.parse(raw)
+            if (parsed != null) {
+                profiles = (profiles + parsed).toMutableList()
+                repo.saveProfiles(profiles)
+                if (selectedId == null) {
+                    selectedId = parsed.id
+                    repo.saveSelectedProfileId(parsed.id)
+                }
+                snackbarHostState.showSnackbar("سرور «${parsed.name}» اضافه شد")
+            } else {
+                snackbarHostState.showSnackbar("این فایل OpenVPN خوانده نشد")
+            }
+            onOvpnFileConsumed()
         }
     }
 
@@ -434,11 +523,18 @@ fun AppRoot(
             }
 
             groupedProfiles.forEach { (sub, list) ->
+                val groupKey = sub?.id ?: "manual"
+                val isExpanded = groupKey in expandedGroups
                 Spacer(Modifier.height(10.dp))
                 ElevatedCard(Modifier.fillMaxWidth()) {
                     Column {
                         Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    expandedGroups = if (isExpanded) expandedGroups - groupKey else expandedGroups + groupKey
+                                }
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -459,36 +555,45 @@ fun AppRoot(
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
-                            Surface(
-                                shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
-                                color = MaterialTheme.colorScheme.surfaceVariant
-                            ) {
-                                Text(
-                                    "${list.size} سرور",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+                                    color = MaterialTheme.colorScheme.surfaceVariant
+                                ) {
+                                    Text(
+                                        "${list.size} سرور",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+                                Spacer(Modifier.width(6.dp))
+                                Icon(
+                                    if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                    contentDescription = if (isExpanded) "بستن" else "باز کردن"
                                 )
                             }
                         }
-                        Divider()
-                        list.forEach { profile ->
-                            ServerRow(
-                                profile = profile,
-                                selected = profile.id == selectedId,
-                                pinging = profile.id in pingingIds,
-                                pingResult = pingResults[profile.id],
-                                onSelect = {
-                                    selectedId = profile.id
-                                    repo.saveSelectedProfileId(profile.id)
-                                },
-                                onPing = { pingOne(profile) },
-                                onEdit = { editingProfile = profile },
-                                onDelete = {
-                                    profiles = profiles.filterNot { it.id == profile.id }.toMutableList()
-                                    repo.saveProfiles(profiles)
-                                    if (selectedId == profile.id) selectedId = null
-                                }
-                            )
+                        if (isExpanded) {
+                            Divider()
+                            list.forEach { profile ->
+                                ServerRow(
+                                    profile = profile,
+                                    selected = profile.id == selectedId,
+                                    pinging = profile.id in pingingIds,
+                                    pingResult = pingResults[profile.id],
+                                    onSelect = {
+                                        selectedId = profile.id
+                                        repo.saveSelectedProfileId(profile.id)
+                                    },
+                                    onPing = { pingOne(profile) },
+                                    onEdit = { editingProfile = profile },
+                                    onDelete = {
+                                        profiles = profiles.filterNot { it.id == profile.id }.toMutableList()
+                                        repo.saveProfiles(profiles)
+                                        if (selectedId == profile.id) selectedId = null
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -558,7 +663,25 @@ fun AppRoot(
                     scope.launch { snackbarHostState.showSnackbar("این کانفیگ WireGuard خوانده نشد") }
                     false
                 }
-            }
+            },
+            onPickWgFile = { showAddDialog = false; onPickWgFile() },
+            onAddOpenVpn = { raw ->
+                val parsed = OpenVpnParser.parse(raw)
+                if (parsed != null) {
+                    profiles = (profiles + parsed).toMutableList()
+                    repo.saveProfiles(profiles)
+                    if (selectedId == null) {
+                        selectedId = parsed.id
+                        repo.saveSelectedProfileId(parsed.id)
+                    }
+                    showAddDialog = false
+                    true
+                } else {
+                    scope.launch { snackbarHostState.showSnackbar("این کانفیگ OpenVPN خوانده نشد") }
+                    false
+                }
+            },
+            onPickOvpnFile = { showAddDialog = false; onPickOvpnFile() }
         )
     }
 
@@ -790,9 +913,12 @@ fun AddServerDialog(
     onDismiss: () -> Unit,
     onScanQr: () -> Unit,
     onAdd: (String) -> Boolean,
-    onAddWireGuard: (String) -> Boolean
+    onAddWireGuard: (String) -> Boolean,
+    onPickWgFile: () -> Unit,
+    onAddOpenVpn: (String) -> Boolean,
+    onPickOvpnFile: () -> Unit
 ) {
-    var mode by remember { mutableStateOf("link") } // "link" | "wireguard"
+    var mode by remember { mutableStateOf("link") } // "link" | "wireguard" | "openvpn"
     var text by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
@@ -813,45 +939,80 @@ fun AddServerDialog(
                         onClick = { mode = "wireguard"; error = null },
                         label = { Text("WireGuard") }
                     )
+                    FilterChip(
+                        selected = mode == "openvpn",
+                        onClick = { mode = "openvpn"; error = null },
+                        label = { Text("OpenVPN") }
+                    )
                 }
                 Spacer(Modifier.height(10.dp))
 
-                if (mode == "link") {
-                    Text(
-                        "لینک vmess:// vless:// trojan:// یا ss:// را وارد کن، یا کد QR رو اسکن کن.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = onScanQr, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text("اسکن QR")
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                clipboardManager.getText()?.text?.let { text = it; error = null }
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Filled.ContentPaste, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text("چسباندن")
+                when (mode) {
+                    "link" -> {
+                        Text(
+                            "لینک vmess:// vless:// trojan:// یا ss:// را وارد کن، یا کد QR رو اسکن کن.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = onScanQr, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("اسکن QR")
+                            }
+                            OutlinedButton(
+                                onClick = { clipboardManager.getText()?.text?.let { text = it; error = null } },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Filled.ContentPaste, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("چسباندن")
+                            }
                         }
                     }
-                } else {
-                    Text(
-                        "کل متن کانفیگ WireGuard (شامل [Interface] و [Peer]) را پیست کن.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = { clipboardManager.getText()?.text?.let { text = it; error = null } },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Filled.ContentPaste, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("چسباندن از کلیپ‌بورد")
+                    "wireguard" -> {
+                        Text(
+                            "متن کانفیگ WireGuard (شامل [Interface] و [Peer]) را پیست کن یا فایل .conf رو انتخاب کن.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = onPickWgFile, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.Filled.FileOpen, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("انتخاب فایل")
+                            }
+                            OutlinedButton(
+                                onClick = { clipboardManager.getText()?.text?.let { text = it; error = null } },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Filled.ContentPaste, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("چسباندن")
+                            }
+                        }
+                    }
+                    else -> {
+                        Text(
+                            "متن کانفیگ OpenVPN (.ovpn) را پیست کن یا فایلش رو انتخاب کن.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = onPickOvpnFile, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.Filled.FileOpen, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("انتخاب فایل")
+                            }
+                            OutlinedButton(
+                                onClick = { clipboardManager.getText()?.text?.let { text = it; error = null } },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Filled.ContentPaste, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("چسباندن")
+                            }
+                        }
                     }
                 }
 
@@ -861,7 +1022,7 @@ fun AddServerDialog(
                     onValueChange = { text = it; error = null },
                     modifier = Modifier.fillMaxWidth(),
                     isError = error != null,
-                    minLines = if (mode == "wireguard") 6 else 3
+                    minLines = if (mode == "link") 3 else 6
                 )
                 error?.let {
                     Spacer(Modifier.height(4.dp))
@@ -871,9 +1032,16 @@ fun AddServerDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                val ok = if (mode == "wireguard") onAddWireGuard(text) else onAdd(text)
-                if (!ok) error = if (mode == "wireguard") "این کانفیگ خوانده نشد — [Interface] و [Peer] رو چک کن"
-                    else "این لینک خوانده نشد — فرمتش رو بررسی کن"
+                val ok = when (mode) {
+                    "wireguard" -> onAddWireGuard(text)
+                    "openvpn" -> onAddOpenVpn(text)
+                    else -> onAdd(text)
+                }
+                if (!ok) error = when (mode) {
+                    "wireguard" -> "این کانفیگ خوانده نشد — [Interface] و [Peer] رو چک کن"
+                    "openvpn" -> "این کانفیگ خوانده نشد — باید خط remote داشته باشه"
+                    else -> "این لینک خوانده نشد — فرمتش رو بررسی کن"
+                }
             }) { Text("افزودن") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } }
@@ -901,6 +1069,30 @@ fun EditServerDialog(profile: ProxyProfile, onDismiss: () -> Unit, onSave: (Prox
             },
             confirmButton = {
                 TextButton(onClick = { onSave(profile.copy(name = name, wgConfigText = wgText)) }) { Text("ذخیره") }
+            },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } }
+        )
+        return
+    }
+
+    if (profile.protocol == "openvpn") {
+        var name by remember { mutableStateOf(profile.name) }
+        var ovpnText by remember { mutableStateOf(profile.ovpnConfigText) }
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("ویرایش سرور OpenVPN") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("نام") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = ovpnText, onValueChange = { ovpnText = it },
+                        label = { Text("متن کانفیگ") }, modifier = Modifier.fillMaxWidth(), minLines = 8
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { onSave(profile.copy(name = name, ovpnConfigText = ovpnText)) }) { Text("ذخیره") }
             },
             dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } }
         )
