@@ -10,7 +10,6 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven(url = "https://jitpack.io") // for com.github.schwabe:ics-openvpn
         flatDir { dirs("app/libs") }
     }
 }
