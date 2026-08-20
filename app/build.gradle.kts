@@ -107,5 +107,5 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("com.wireguard.android:tunnel:1.0.20230706")
-    implementation("com.github.schwabe:ics-openvpn:v0.6.73-production")
+    implementation("com.github.schwabe.ics-openvpn:main:v0.6.73-production")
 }
