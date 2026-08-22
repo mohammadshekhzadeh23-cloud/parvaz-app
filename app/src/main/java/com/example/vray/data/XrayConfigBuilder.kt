@@ -17,11 +17,16 @@ data class AppSettings(
     val selectedApps: Set<String> = emptySet(),
     val autoReconnect: Boolean = true,
     val killSwitch: Boolean = false,
-    val autoFailover: Boolean = false
+    val autoFailover: Boolean = false,
+    val mtu: Int = 1500,
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val autoConnectOnLaunch: Boolean = false,
+    val autoConnectOnBoot: Boolean = false
 )
 
 enum class RoutingMode { GLOBAL, BYPASS_IRAN, BYPASS_CHINA }
 enum class PerAppMode { ALL, ONLY_SELECTED, EXCEPT_SELECTED }
+enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
 object XrayConfigBuilder {
 
@@ -101,7 +106,7 @@ object XrayConfigBuilder {
             put("protocol", "tun")
             put("settings", JSONObject().apply {
                 put("name", "xray0")
-                put("mtu", 1500)
+                put("mtu", settings.mtu)
             })
             put("sniffing", JSONObject().apply {
                 put("enabled", true)

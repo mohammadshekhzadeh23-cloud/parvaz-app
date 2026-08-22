@@ -45,7 +45,11 @@ class Repository(context: Context) {
             } ?: emptySet(),
             autoReconnect = o.optBoolean("autoReconnect", true),
             killSwitch = o.optBoolean("killSwitch", false),
-            autoFailover = o.optBoolean("autoFailover", false)
+            autoFailover = o.optBoolean("autoFailover", false),
+            mtu = o.optInt("mtu", 1500),
+            themeMode = ThemeMode.valueOf(o.optString("themeMode", ThemeMode.SYSTEM.name)),
+            autoConnectOnLaunch = o.optBoolean("autoConnectOnLaunch", false),
+            autoConnectOnBoot = o.optBoolean("autoConnectOnBoot", false)
         )
     }
 
@@ -61,6 +65,10 @@ class Repository(context: Context) {
             put("autoReconnect", s.autoReconnect)
             put("killSwitch", s.killSwitch)
             put("autoFailover", s.autoFailover)
+            put("mtu", s.mtu)
+            put("themeMode", s.themeMode.name)
+            put("autoConnectOnLaunch", s.autoConnectOnLaunch)
+            put("autoConnectOnBoot", s.autoConnectOnBoot)
         }
         prefs.edit().putString("settings", o.toString()).apply()
     }
@@ -111,5 +119,55 @@ class Repository(context: Context) {
 
     fun setOnboardingDone() {
         prefs.edit().putBoolean("onboarding_done", true).apply()
+    }
+
+    /** Full backup: every saved server + subscription, as one JSON blob the user can share/store. */
+    fun exportBackupJson(): String {
+        val root = JSONObject()
+        val profilesArr = JSONArray()
+        loadProfiles().forEach { profilesArr.put(it.toJson()) }
+        root.put("profiles", profilesArr)
+
+        val subsArr = JSONArray()
+        loadSubscriptions().forEach { s ->
+            subsArr.put(JSONObject().apply {
+                put("id", s.id); put("label", s.label); put("url", s.url)
+                put("lastUpdatedEpochMs", s.lastUpdatedEpochMs)
+                s.expireAtEpochSec?.let { put("expireAtEpochSec", it) }
+                s.dataLimitBytes?.let { put("dataLimitBytes", it) }
+                s.dataUsedBytes?.let { put("dataUsedBytes", it) }
+            })
+        }
+        root.put("subscriptions", subsArr)
+        root.put("exportedAt", System.currentTimeMillis())
+        return root.toString(2)
+    }
+
+    /** Replaces current servers/subscriptions with the contents of a previously exported backup. */
+    fun importBackupJson(json: String): Boolean = try {
+        val root = JSONObject(json)
+
+        root.optJSONArray("profiles")?.let { arr ->
+            saveProfiles(MutableList(arr.length()) { ProxyProfile.fromJson(arr.getJSONObject(it)) })
+        }
+
+        root.optJSONArray("subscriptions")?.let { arr ->
+            val list = MutableList(arr.length()) { i ->
+                val o = arr.getJSONObject(i)
+                Subscription(
+                    id = o.getString("id"),
+                    label = o.optString("label", "اشتراک"),
+                    url = o.getString("url"),
+                    lastUpdatedEpochMs = o.optLong("lastUpdatedEpochMs", 0L),
+                    expireAtEpochSec = if (o.has("expireAtEpochSec")) o.optLong("expireAtEpochSec") else null,
+                    dataLimitBytes = if (o.has("dataLimitBytes")) o.optLong("dataLimitBytes") else null,
+                    dataUsedBytes = if (o.has("dataUsedBytes")) o.optLong("dataUsedBytes") else null
+                )
+            }
+            saveSubscriptions(list)
+        }
+        true
+    } catch (e: Exception) {
+        false
     }
 }

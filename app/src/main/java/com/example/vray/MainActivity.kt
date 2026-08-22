@@ -19,12 +19,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FileOpen
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
@@ -64,6 +68,7 @@ class MainActivity : ComponentActivity() {
     private var scannedLink by mutableStateOf<String?>(null)
     private var wgFileText by mutableStateOf<String?>(null)
     private var ovpnFileText by mutableStateOf<String?>(null)
+    private var backupFileText by mutableStateOf<String?>(null)
 
     private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
         result.contents?.let { scannedLink = it }
@@ -75,6 +80,18 @@ class MainActivity : ComponentActivity() {
 
     private val ovpnFilePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let { readFileText(it)?.let { text -> ovpnFileText = text } }
+    }
+
+    private val backupFilePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { readFileText(it)?.let { text -> backupFileText = text } }
+    }
+
+    private fun shareText(text: String, title: String) {
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        startActivity(Intent.createChooser(send, title))
     }
 
     private fun readFileText(uri: android.net.Uri): String? = try {
@@ -111,7 +128,8 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            VRayTheme {
+            var themeMode by remember { mutableStateOf(repo.loadSettings().themeMode) }
+            VRayTheme(themeMode = themeMode) {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                     var crashText by remember { mutableStateOf(repo.getLastCrash(this)) }
                     var onboardingDone by remember { mutableStateOf(repo.isOnboardingDone()) }
@@ -146,6 +164,11 @@ class MainActivity : ComponentActivity() {
                             ovpnFileText = ovpnFileText,
                             onOvpnFileConsumed = { ovpnFileText = null },
                             onPickOvpnFile = { ovpnFilePickerLauncher.launch("*/*") },
+                            backupFileText = backupFileText,
+                            onBackupFileConsumed = { backupFileText = null },
+                            onPickBackupFile = { backupFilePickerLauncher.launch("*/*") },
+                            onShareText = { text, title -> shareText(text, title) },
+                            onThemeModeChanged = { themeMode = it },
                             onConnect = { profileId -> requestConnect(profileId) },
                             onDisconnect = { disconnect() }
                         )
@@ -213,7 +236,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { Main, AppPicker }
+private enum class Screen { Main, AppPicker, Info }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -228,6 +251,11 @@ fun AppRoot(
     ovpnFileText: String?,
     onOvpnFileConsumed: () -> Unit,
     onPickOvpnFile: () -> Unit,
+    backupFileText: String?,
+    onBackupFileConsumed: () -> Unit,
+    onPickBackupFile: () -> Unit,
+    onShareText: (text: String, title: String) -> Unit,
+    onThemeModeChanged: (ThemeMode) -> Unit,
     onConnect: (String) -> Unit,
     onDisconnect: () -> Unit
 ) {
@@ -235,12 +263,23 @@ fun AppRoot(
     var subscriptions by remember { mutableStateOf(repo.loadSubscriptions()) }
     var selectedId by remember { mutableStateOf(repo.loadSelectedProfileId()) }
     var settings by remember { mutableStateOf(repo.loadSettings()) }
+    var searchQuery by remember { mutableStateOf("") }
 
     val groupedProfiles: List<Pair<Subscription?, List<ProxyProfile>>> = remember(profiles, subscriptions) {
         val bySub = profiles.groupBy { it.subscriptionId }
         val subGroups = subscriptions.mapNotNull { sub -> bySub[sub.id]?.let { sub to it } }
         val manual = bySub[null]?.takeIf { it.isNotEmpty() }?.let { null to it }
         if (manual != null) subGroups + listOf(manual) else subGroups
+    }
+
+    val visibleGroups = remember(groupedProfiles, searchQuery) {
+        if (searchQuery.isBlank()) groupedProfiles
+        else groupedProfiles.mapNotNull { (sub, list) ->
+            val filtered = list.filter {
+                it.name.contains(searchQuery, ignoreCase = true) || it.address.contains(searchQuery, ignoreCase = true)
+            }
+            if (filtered.isEmpty()) null else sub to filtered
+        }
     }
 
     val selectedProtocol = profiles.firstOrNull { it.id == selectedId }?.protocol
@@ -270,6 +309,7 @@ fun AppRoot(
     var showSupportDialog by remember { mutableStateOf(false) }
     var showErrorDetail by remember { mutableStateOf(false) }
     var editingProfile by remember { mutableStateOf<ProxyProfile?>(null) }
+    var deletingProfile by remember { mutableStateOf<ProxyProfile?>(null) }
     var screen by rememberSaveable { mutableStateOf<Screen>(Screen.Main) }
     var quickConnecting by remember { mutableStateOf(false) }
     var pingingIds by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -291,13 +331,26 @@ fun AppRoot(
     }
 
     fun pingAllVisible() {
-        groupedProfiles.flatMap { it.second }.forEach { pingOne(it) }
+        groupedProfiles.flatMap { it.second }
+            .filter { it.protocol != "wireguard" && it.protocol != "openvpn" }
+            .forEach { pingOne(it) }
     }
 
     LaunchedEffect(lastError) {
         lastError?.let {
             val result = snackbarHostState.showSnackbar(it, actionLabel = "جزئیات")
             if (result == SnackbarResult.ActionPerformed) showErrorDetail = true
+        }
+    }
+
+    // Runs once per app launch (this composable is created fresh each time MainActivity
+    // starts). Only fires if nothing is already connecting/connected, so re-composition
+    // from unrelated state changes won't repeatedly trigger it.
+    LaunchedEffect(Unit) {
+        if (settings.autoConnectOnLaunch && selectedId != null &&
+            connState == ConnectionState.DISCONNECTED
+        ) {
+            onConnect(selectedId!!)
         }
     }
 
@@ -355,6 +408,19 @@ fun AppRoot(
         }
     }
 
+    LaunchedEffect(backupFileText) {
+        backupFileText?.let { json ->
+            if (repo.importBackupJson(json)) {
+                profiles = repo.loadProfiles()
+                subscriptions = repo.loadSubscriptions()
+                snackbarHostState.showSnackbar("بازیابی با موفقیت انجام شد")
+            } else {
+                snackbarHostState.showSnackbar("این فایل پشتیبان خوانده نشد")
+            }
+            onBackupFileConsumed()
+        }
+    }
+
     if (screen == Screen.AppPicker) {
         AppPickerScreen(
             initiallySelected = settings.selectedApps,
@@ -364,6 +430,11 @@ fun AppRoot(
                 repo.saveSettings(settings)
             }
         )
+        return
+    }
+
+    if (screen == Screen.Info) {
+        InfoScreen(onBack = { screen = Screen.Main })
         return
     }
 
@@ -467,7 +538,8 @@ fun AppRoot(
                 stats = trafficStats,
                 hasSelection = selectedId != null,
                 quickConnecting = quickConnecting,
-                killSwitchActive = settings.killSwitch && connState == ConnectionState.ERROR,
+                killSwitchActive = selectedProtocol != "wireguard" && selectedProtocol != "openvpn" &&
+                    settings.killSwitch && connState == ConnectionState.ERROR,
                 onConnect = { selectedId?.let { onConnect(it) } },
                 onDisconnect = onDisconnect,
                 onQuickConnect = {
@@ -512,6 +584,25 @@ fun AppRoot(
                     }
                 }
             }
+
+            if (groupedProfiles.size > 1 || groupedProfiles.sumOf { it.second.size } > 5) {
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("جستجوی سرور…") },
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Filled.Close, contentDescription = "پاک کردن")
+                            }
+                        }
+                    }
+                )
+            }
             Spacer(Modifier.height(4.dp))
 
             if (groupedProfiles.isEmpty()) {
@@ -520,9 +611,15 @@ fun AppRoot(
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(vertical = 12.dp)
                 )
+            } else if (visibleGroups.isEmpty()) {
+                Text(
+                    "چیزی با این جستجو پیدا نشد",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(vertical = 12.dp)
+                )
             }
 
-            groupedProfiles.forEach { (sub, list) ->
+            visibleGroups.forEach { (sub, list) ->
                 val groupKey = sub?.id ?: "manual"
                 val isExpanded = groupKey in expandedGroups
                 Spacer(Modifier.height(10.dp))
@@ -587,11 +684,12 @@ fun AppRoot(
                                     },
                                     onPing = { pingOne(profile) },
                                     onEdit = { editingProfile = profile },
-                                    onDelete = {
-                                        profiles = profiles.filterNot { it.id == profile.id }.toMutableList()
-                                        repo.saveProfiles(profiles)
-                                        if (selectedId == profile.id) selectedId = null
-                                    }
+                                    onShare = {
+                                        val text = ConfigExporter.toShareableText(profile)
+                                        if (text.isNotBlank()) onShareText(text, "اشتراک‌گذاری «${profile.name}»")
+                                        else scope.launch { snackbarHostState.showSnackbar("چیزی برای اشتراک‌گذاری نیست") }
+                                    },
+                                    onDelete = { deletingProfile = profile }
                                 )
                             }
                         }
@@ -606,7 +704,8 @@ fun AppRoot(
             onDismissRequest = { showErrorDetail = false },
             title = { Text("جزئیات خطای اتصال") },
             text = {
-                val detail = repo.getLastConnectError(context) ?: "جزئیاتی ثبت نشده"
+                val isXray = selectedProtocol != "wireguard" && selectedProtocol != "openvpn"
+                val detail = (if (isXray) repo.getLastConnectError(context) else null) ?: lastError ?: "جزئیاتی ثبت نشده"
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     SelectionContainer {
                         Text(detail, style = MaterialTheme.typography.bodySmall)
@@ -615,7 +714,8 @@ fun AppRoot(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val detail = repo.getLastConnectError(context) ?: ""
+                    val isXray = selectedProtocol != "wireguard" && selectedProtocol != "openvpn"
+                    val detail = (if (isXray) repo.getLastConnectError(context) else null) ?: lastError ?: ""
                     val send = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
                         putExtra(Intent.EXTRA_TEXT, detail)
@@ -697,6 +797,23 @@ fun AppRoot(
         )
     }
 
+    deletingProfile?.let { profile ->
+        AlertDialog(
+            onDismissRequest = { deletingProfile = null },
+            title = { Text("حذف سرور") },
+            text = { Text("سرور «${profile.name}» حذف بشه؟") },
+            confirmButton = {
+                TextButton(onClick = {
+                    profiles = profiles.filterNot { it.id == profile.id }.toMutableList()
+                    repo.saveProfiles(profiles)
+                    if (selectedId == profile.id) selectedId = null
+                    deletingProfile = null
+                }) { Text("حذف", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { deletingProfile = null }) { Text("انصراف") } }
+        )
+    }
+
     if (showSettingsSheet) {
         SettingsSheet(
             settings = settings,
@@ -705,6 +822,7 @@ fun AppRoot(
             onSave = {
                 settings = it
                 repo.saveSettings(it)
+                onThemeModeChanged(it.themeMode)
                 showSettingsSheet = false
             },
             onChooseApps = {
@@ -716,7 +834,13 @@ fun AppRoot(
             },
             onAddSubscription = { label, url -> addSubscription(label, url) },
             onRefreshSubscription = { sub -> refreshSubscription(sub) },
-            onDeleteSubscription = { sub -> deleteSubscription(sub) }
+            onRenameSubscription = { sub, newLabel ->
+                subscriptions = subscriptions.map { if (it.id == sub.id) it.copy(label = newLabel) else it }.toMutableList()
+                repo.saveSubscriptions(subscriptions)
+            },
+            onDeleteSubscription = { sub -> deleteSubscription(sub) },
+            onExportBackup = { onShareText(repo.exportBackupJson(), "خروجی پشتیبان از سرورها") },
+            onPickBackupFile = onPickBackupFile
         )
     }
 
@@ -725,7 +849,7 @@ fun AppRoot(
             onDismissRequest = { showSupportDialog = false },
             title = { Text("پشتیبانی") },
             text = {
-                Text("برای دریافت سرور جدید یا کمک، به آیدی تلگرام @YourSupportID پیام بده.\n(این آیدی رو توی کد جایگزین کن.)")
+                Text("برای دریافت سرور جدید یا کمک، به آیدی تلگرام @dfge2_u پیام بده.")
             },
             confirmButton = { TextButton(onClick = { showSupportDialog = false }) { Text("باشه") } }
         )
@@ -871,13 +995,17 @@ fun ServerRow(
     onSelect: () -> Unit,
     onPing: () -> Unit,
     onEdit: () -> Unit,
+    onShare: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val pingSupported = profile.protocol != "wireguard" && profile.protocol != "openvpn"
     val pingLabel = when {
+        !pingSupported -> null
         pingResult == null -> null
         pingResult in 0..60000 -> "${pingResult} ms"
         else -> "بدون پاسخ"
     }
+    var showMenu by remember { mutableStateOf(false) }
 
     ListItem(
         headlineContent = { Text(profile.name) },
@@ -890,15 +1018,33 @@ fun ServerRow(
         leadingContent = { RadioButton(selected = selected, onClick = onSelect) },
         trailingContent = {
             Row {
-                IconButton(onClick = onPing, enabled = !pinging) {
-                    if (pinging) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Filled.Speed, contentDescription = "تست پینگ")
+                if (pingSupported) {
+                    IconButton(onClick = onPing, enabled = !pinging) {
+                        if (pinging) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Filled.Speed, contentDescription = "تست پینگ")
+                    }
                 }
-                IconButton(onClick = onEdit) {
-                    Icon(Icons.Filled.Edit, contentDescription = "ویرایش")
-                }
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Filled.Delete, contentDescription = "حذف")
+                Box {
+                    IconButton(onClick = { showMenu = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "بیشتر")
+                    }
+                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("ویرایش") },
+                            leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
+                            onClick = { showMenu = false; onEdit() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("اشتراک‌گذاری") },
+                            leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
+                            onClick = { showMenu = false; onShare() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("حذف") },
+                            leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                            onClick = { showMenu = false; onDelete() }
+                        )
+                    }
                 }
             }
         },
@@ -1158,10 +1304,15 @@ fun SettingsSheet(
     onOpenSystemVpnSettings: () -> Unit,
     onAddSubscription: (label: String, url: String) -> Unit,
     onRefreshSubscription: (Subscription) -> Unit,
-    onDeleteSubscription: (Subscription) -> Unit
+    onRenameSubscription: (Subscription, String) -> Unit,
+    onDeleteSubscription: (Subscription) -> Unit,
+    onExportBackup: () -> Unit,
+    onPickBackupFile: () -> Unit
 ) {
     var s by remember { mutableStateOf(settings) }
     var showAddSubDialog by remember { mutableStateOf(false) }
+    var renamingSub by remember { mutableStateOf<Subscription?>(null) }
+    var deletingSub by remember { mutableStateOf<Subscription?>(null) }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState())) {
@@ -1182,10 +1333,13 @@ fun SettingsSheet(
                         Text(sub.label, style = MaterialTheme.typography.bodyLarge)
                         Text(sub.url, style = MaterialTheme.typography.bodySmall, maxLines = 1)
                     }
+                    IconButton(onClick = { renamingSub = sub }) {
+                        Icon(Icons.Filled.Edit, contentDescription = "تغییر نام")
+                    }
                     IconButton(onClick = { onRefreshSubscription(sub) }) {
                         Icon(Icons.Filled.Refresh, contentDescription = "بروزرسانی")
                     }
-                    IconButton(onClick = { onDeleteSubscription(sub) }) {
+                    IconButton(onClick = { deletingSub = sub }) {
                         Icon(Icons.Filled.Delete, contentDescription = "حذف اشتراک")
                     }
                 }
@@ -1195,6 +1349,25 @@ fun SettingsSheet(
                 Icon(Icons.Filled.Add, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
                 Text("افزودن اشتراک جدید")
+            }
+
+            Spacer(Modifier.height(20.dp))
+            Divider()
+            Spacer(Modifier.height(16.dp))
+
+            Text("پشتیبان‌گیری", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "همه‌ی سرورها و اشتراک‌ها رو به یه فایل بگیر، یا از یه فایل قبلی برگردون.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onExportBackup, modifier = Modifier.weight(1f)) {
+                    Text("خروجی گرفتن")
+                }
+                OutlinedButton(onClick = onPickBackupFile, modifier = Modifier.weight(1f)) {
+                    Text("بازیابی از فایل")
+                }
             }
 
             Spacer(Modifier.height(20.dp))
@@ -1215,16 +1388,75 @@ fun SettingsSheet(
 
             SwitchRow("فعال‌سازی UDP", s.enableUdp) { s = s.copy(enableUdp = it) }
             SwitchRow("فعال‌سازی Mux (مالتی‌پلکس)", s.muxEnabled) { s = s.copy(muxEnabled = it) }
+            if (s.muxEnabled) {
+                Text(
+                    "تعداد Mux Concurrency: ${s.muxConcurrency}",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                Slider(
+                    value = s.muxConcurrency.toFloat(),
+                    onValueChange = { s = s.copy(muxConcurrency = it.toInt()) },
+                    valueRange = 1f..16f,
+                    steps = 14
+                )
+            }
             SwitchRow("ترافیک شبکه محلی مستقیم بره", s.bypassLan) { s = s.copy(bypassLan = it) }
 
             Spacer(Modifier.height(12.dp))
             Text("اتصال هوشمند", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "این بخش و مسیریابی/تانل اپ‌ها فقط روی سرورهای VMess/VLESS/Trojan/SS اثر دارن، نه WireGuard",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(4.dp))
             SwitchRow("اتصال مجدد خودکار", s.autoReconnect) { s = s.copy(autoReconnect = it) }
             SwitchRow("سوییچ خودکار به سرور دیگر", s.autoFailover) { s = s.copy(autoFailover = it) }
             SwitchRow("Kill Switch (قطع اینترنت هنگام افت اتصال)", s.killSwitch) { s = s.copy(killSwitch = it) }
             TextButton(onClick = onOpenSystemVpnSettings) {
                 Text("قفل کامل‌تر: تنظیمات VPN سیستم را باز کن")
             }
+
+            Spacer(Modifier.height(12.dp))
+            Divider()
+            Spacer(Modifier.height(12.dp))
+            Text("تنظیمات پیشرفته", style = MaterialTheme.typography.titleMedium)
+
+            SwitchRow("اتصال خودکار هنگام باز شدن اپ", s.autoConnectOnLaunch) { s = s.copy(autoConnectOnLaunch = it) }
+            SwitchRow("اتصال خودکار بعد از روشن شدن گوشی", s.autoConnectOnBoot) { s = s.copy(autoConnectOnBoot = it) }
+            Text(
+                "برای اتصال خودکار بعد از روشن شدن گوشی، باید حداقل یک‌بار قبلش مجوز VPN رو داده باشی.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(Modifier.height(12.dp))
+            Text("ظاهر برنامه", style = MaterialTheme.typography.bodyLarge)
+            val themeLabels = mapOf(
+                ThemeMode.SYSTEM to "مطابق سیستم",
+                ThemeMode.LIGHT to "روشن",
+                ThemeMode.DARK to "تاریک"
+            )
+            ThemeMode.entries.forEach { mode ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = s.themeMode == mode, onClick = { s = s.copy(themeMode = mode) })
+                    Text(themeLabels[mode] ?: mode.name)
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Text("MTU: ${s.mtu}", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "پیش‌فرض ۱۵۰۰ خوبه؛ اگه اینترنتت روی بعضی شبکه‌ها قطع‌وصل می‌شه، عددهای کمتر (مثلاً ۱۴۰۰) رو امتحان کن.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Slider(
+                value = s.mtu.toFloat(),
+                onValueChange = { s = s.copy(mtu = it.toInt()) },
+                valueRange = 1280f..1500f
+            )
 
             Spacer(Modifier.height(12.dp))
             Text("مسیریابی", style = MaterialTheme.typography.titleMedium)
@@ -1279,6 +1511,42 @@ fun SettingsSheet(
                 onAddSubscription(label, url)
                 showAddSubDialog = false
             }
+        )
+    }
+
+    renamingSub?.let { sub ->
+        var newLabel by remember(sub.id) { mutableStateOf(sub.label) }
+        AlertDialog(
+            onDismissRequest = { renamingSub = null },
+            title = { Text("تغییر نام گروه") },
+            text = {
+                OutlinedTextField(
+                    value = newLabel, onValueChange = { newLabel = it },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (newLabel.isNotBlank()) onRenameSubscription(sub, newLabel)
+                    renamingSub = null
+                }) { Text("ذخیره") }
+            },
+            dismissButton = { TextButton(onClick = { renamingSub = null }) { Text("انصراف") } }
+        )
+    }
+
+    deletingSub?.let { sub ->
+        AlertDialog(
+            onDismissRequest = { deletingSub = null },
+            title = { Text("حذف اشتراک") },
+            text = { Text("اشتراک «${sub.label}» و همه‌ی سرورهاش حذف بشن؟") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDeleteSubscription(sub)
+                    deletingSub = null
+                }) { Text("حذف", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { deletingSub = null }) { Text("انصراف") } }
         )
     }
 }

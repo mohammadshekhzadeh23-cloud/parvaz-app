@@ -276,7 +276,7 @@ class ProxyVpnService : VpnService(), CoreCallbackHandler {
             .addAddress("10.10.14.1", 30)
             .addRoute("0.0.0.0", 0)
             .addDnsServer(settings.customDns.firstOrNull() ?: "1.1.1.1")
-            .setMtu(1500)
+            .setMtu(settings.mtu)
 
         when (settings.perAppMode) {
             PerAppMode.ONLY_SELECTED -> settings.selectedApps.forEach {

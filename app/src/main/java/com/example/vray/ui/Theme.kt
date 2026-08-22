@@ -53,7 +53,12 @@ val StatusError = Danger
 val StatusDisconnected = Color(0xFF9CA3AF)
 
 @Composable
-fun VRayTheme(content: @Composable () -> Unit) {
-    val colors = if (isSystemInDarkTheme()) DarkColors else LightColors
+fun VRayTheme(themeMode: com.example.vray.data.ThemeMode = com.example.vray.data.ThemeMode.SYSTEM, content: @Composable () -> Unit) {
+    val useDark = when (themeMode) {
+        com.example.vray.data.ThemeMode.LIGHT -> false
+        com.example.vray.data.ThemeMode.DARK -> true
+        com.example.vray.data.ThemeMode.SYSTEM -> isSystemInDarkTheme()
+    }
+    val colors = if (useDark) DarkColors else LightColors
     MaterialTheme(colorScheme = colors, typography = AppTypography, content = content)
 }
