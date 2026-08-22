@@ -38,6 +38,22 @@ object XrayConfigBuilder {
         root.put("inbounds", buildInbounds(settings))
         root.put("outbounds", buildOutbounds(profile, settings))
         root.put("routing", buildRouting(settings))
+
+        // Without these two blocks, Xray never actually counts traffic per-outbound,
+        // so controller.queryStats("proxy", "uplink"/"downlink") always returns 0 --
+        // this is what makes the app show ↑0 ↓0 forever even while data is flowing.
+        root.put("stats", JSONObject())
+        root.put("policy", JSONObject().apply {
+            put("levels", JSONObject().put("0", JSONObject().apply {
+                put("statsUserUplink", true)
+                put("statsUserDownlink", true)
+            }))
+            put("system", JSONObject().apply {
+                put("statsOutboundUplink", true)
+                put("statsOutboundDownlink", true)
+            })
+        })
+
         if (settings.muxEnabled) {
             // mux is attached to the outbound itself, see buildOutbounds
         }
