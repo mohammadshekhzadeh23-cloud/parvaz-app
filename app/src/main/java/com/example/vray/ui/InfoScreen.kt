@@ -1,5 +1,6 @@
 package com.example.vray.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -98,7 +99,7 @@ private val sections = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun InfoScreen(onBack: () -> Unit) {
+fun InfoScreen(ads: List<com.example.vray.data.AdItem>, onAdClick: (com.example.vray.data.AdItem) -> Unit, onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -118,6 +119,30 @@ fun InfoScreen(onBack: () -> Unit) {
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
+            if (ads.isNotEmpty()) {
+                Text("معرفی", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
+                ads.forEach { ad ->
+                    OutlinedCard(
+                        Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                            .then(Modifier),
+                    ) {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { onAdClick(ad) }
+                                .padding(12.dp)
+                        ) {
+                            Text(ad.title, style = MaterialTheme.typography.bodyLarge)
+                            Text(ad.body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Divider()
+                Spacer(Modifier.height(16.dp))
+            }
+
             sections.forEach { section ->
                 Text(section.heading, style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(8.dp))

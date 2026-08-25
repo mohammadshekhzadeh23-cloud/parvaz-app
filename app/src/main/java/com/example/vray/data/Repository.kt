@@ -121,6 +121,12 @@ class Repository(context: Context) {
         prefs.edit().putBoolean("onboarding_done", true).apply()
     }
 
+    fun isFirstLaunchAdShown(): Boolean = prefs.getBoolean("first_launch_ad_shown", false)
+
+    fun setFirstLaunchAdShown() {
+        prefs.edit().putBoolean("first_launch_ad_shown", true).apply()
+    }
+
     /** Full backup: every saved server + subscription, as one JSON blob the user can share/store. */
     fun exportBackupJson(): String {
         val root = JSONObject()

@@ -315,10 +315,32 @@ fun AppRoot(
     var pingingIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var pingResults by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     var expandedGroups by rememberSaveable { mutableStateOf<Set<String>>(emptySet()) }
+    var ads by remember { mutableStateOf<List<AdItem>>(emptyList()) }
+    var showFirstLaunchAd by remember { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+
+    fun openAdLink(ad: AdItem, placement: String) {
+        AdManager.reportClick(ad.id, placement)
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(ad.link)))
+        } catch (_: Exception) {
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val fetched = AdManager.fetchAds()
+        ads = fetched
+        val forFirstLaunch = fetched.forPlacement("first_launch")
+        val forMainCard = fetched.forPlacement("main_card")
+        forMainCard.firstOrNull()?.let { AdManager.reportImpression(it.id, "main_card") }
+        if (forFirstLaunch.isNotEmpty() && !repo.isFirstLaunchAdShown()) {
+            showFirstLaunchAd = true
+            repo.setFirstLaunchAdShown()
+        }
+    }
 
     fun pingOne(profile: ProxyProfile) {
         if (profile.id in pingingIds) return
@@ -434,7 +456,11 @@ fun AppRoot(
     }
 
     if (screen == Screen.Info) {
-        InfoScreen(onBack = { screen = Screen.Main })
+        val infoAds = ads.forPlacement("info_screen")
+        LaunchedEffect(infoAds) {
+            infoAds.forEach { AdManager.reportImpression(it.id, "info_screen") }
+        }
+        InfoScreen(ads = infoAds, onAdClick = { openAdLink(it, "info_screen") }, onBack = { screen = Screen.Main })
         return
     }
 
@@ -516,6 +542,9 @@ fun AppRoot(
             TopAppBar(
                 title = { Text("VELOX VPN") },
                 actions = {
+                    IconButton(onClick = { screen = Screen.Info }) {
+                        Icon(Icons.Filled.Info, contentDescription = "راهنما")
+                    }
                     IconButton(onClick = { showSupportDialog = true }) {
                         Icon(Icons.Filled.SupportAgent, contentDescription = "پشتیبانی")
                     }
@@ -563,6 +592,11 @@ fun AppRoot(
                     }
                 }
             )
+
+            ads.forPlacement("main_card").firstOrNull()?.let { ad ->
+                Spacer(Modifier.height(12.dp))
+                AdCard(ad = ad, onClick = { openAdLink(ad, "main_card") })
+            }
 
             subscriptions.filter { it.expireAtEpochSec != null || (it.dataLimitBytes ?: 0) > 0 }.forEach { sub ->
                 Spacer(Modifier.height(12.dp))
@@ -696,6 +730,20 @@ fun AppRoot(
                     }
                 }
             }
+        }
+    }
+
+    if (showFirstLaunchAd) {
+        ads.forPlacement("first_launch").firstOrNull()?.let { ad ->
+            AlertDialog(
+                onDismissRequest = { showFirstLaunchAd = false },
+                title = { Text(ad.title) },
+                text = { Text(ad.body) },
+                confirmButton = {
+                    TextButton(onClick = { showFirstLaunchAd = false; openAdLink(ad, "first_launch") }) { Text("مشاهده") }
+                },
+                dismissButton = { TextButton(onClick = { showFirstLaunchAd = false }) { Text("بعداً") } }
+            )
         }
     }
 
@@ -853,6 +901,21 @@ fun AppRoot(
             },
             confirmButton = { TextButton(onClick = { showSupportDialog = false }) { Text("باشه") } }
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AdCard(ad: AdItem, onClick: () -> Unit) {
+    OutlinedCard(
+        Modifier.fillMaxWidth().clickable(onClick = onClick),
+        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(ad.title, style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            Text(ad.body, style = MaterialTheme.typography.bodySmall)
+        }
     }
 }
 
